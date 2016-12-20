@@ -1,7 +1,9 @@
+import csv
+
 from collections import namedtuple
 from optparse import OptionParser
 
-Deets = namedtuple('Deets', ['sqft', 'has_window', 'occupied_by'])
+Deets = namedtuple('Deets', ['sqft', 'has_window', 'occupied_by', 'percent_usable'])
 Rent  = namedtuple('Rent', ['price', 'room', 'deets'])
 floor_plan = """
 [Floor B]                  [Floor C]
@@ -20,30 +22,22 @@ floor_plan = """
                            -------------------
 """
 
-B_R1 = ["Single"]
-B_R2 = ["Single"]
-B_R3 = ["Single"]
-B_R4 = ["Double", "Double"]
-B_R5 = ["Double", "Double"]
-C_R1 = ["Single"]
-C_R2 = ["Single"]
-C_R3 = ["Single"]
-C_R4 = ["Single"]
-C_R5 = ["Double", "Double"]
-
-rooms = {
-    # F-R#         SqFt   Has Window   Occupied By
-    "B-R1": Deets( 160.0, True,        B_R1),
-    "B-R2": Deets( 160.0, False,       B_R2),
-    "B-R3": Deets( 150.0, False,       B_R3),
-    "B-R4": Deets( 140.0, True,        B_R4),
-    "B-R5": Deets( 140.0, True,        B_R5),
-    "C-R1": Deets( 190.0, True,        C_R1),
-    "C-R2": Deets( 190.0, True,        C_R2),
-    "C-R3": Deets( 170.0, False,       C_R3),
-    "C-R4": Deets( 160.0, True,        C_R4),
-    "C-R5": Deets( 160.0, True,        C_R5),
-}
+# Expects a csv with the following fields
+# 'room_id', 'sqft', 'has_window', 'percent_usable', 'occupied_by'
+def get_deets_from_csv(file_name='data.csv'):
+  rooms = {}
+  occupants = {}
+  with open(file_name) as csvfile:
+    deets = csv.DictReader(csvfile)
+    for room in deets:
+      room_id = room['room_id']
+      rooms[room_id] = Deets(
+        float(room['sqft']),
+        (room['has_window'] == "True"),
+        room['occupied_by'].split(','),
+        float(room['percent_usable'])
+      )
+  return rooms
 
 # Takes in a decimal representing the percent weight of the common space that
 #   will factor into rent.
@@ -80,10 +74,10 @@ def apply_fees_or_discounts(deets):
 
 
 def calculate_rent(deets, round_dollar=True):
-    room_size, has_window, occupants = deets
+    room_size, has_window, occupants, percent_usable = deets
     occupants = len(occupants)
     base_cost = COMMON_SHARE_COST * occupants
-    room_cost = room_size * ROOM_COST_PER_SQFT
+    room_cost = room_size * ROOM_COST_PER_SQFT * percent_usable
     bonus_fees_or_discounts = apply_fees_or_discounts(deets)
     rent = (base_cost + room_cost) + (bonus_fees_or_discounts * occupants)
     if round_dollar:
@@ -110,16 +104,18 @@ def cheapest_room_picks_up_the_cents(rents):
 
 # Takes in a list of Rent
 def print_rents_per_room(rents):
-    row_divider = "-" * 80
-    row_format = "{:^15}|{:^15}|{:^15}|{:^15}|{:^15}"
+    row_divider = "-" * 96
+    row_format = "{:^15}|{:^15}|{:^15}|{:^15}|{:^15}|{:^15}"
 
     print
-    print row_format.format("Room", "Rent", "SqFt", "Good Lighting",
-                            "Occupants")
+    print row_format.format("Room", "Rent", "SqFt", "% Usable",
+                             "Good Lighting", "Occupants")
     print row_divider
     for rent in sorted(rents):
         print row_format.format(rent.room, ("$%.2f" % rent[0]),
-                                rent.deets.sqft,str(rent.deets.has_window), 
+                                rent.deets.sqft,
+                                "{}%".format(int(rent.deets.percent_usable * 100)),
+                                str(rent.deets.has_window), 
                                 ", ".join(rent.deets.occupied_by))
     print row_divider
     print "{:^15}|{:^15}|".format(
@@ -147,8 +143,8 @@ def print_cost_per_person(rents):
     print
 
 
-RENT_SUM = 15000.00
-HOUSE_SIZE = 6000.00
+RENT_SUM = 18000.00
+HOUSE_SIZE = 6200.00
 
 parser = OptionParser()
 parser.add_option("--bld", "--bad_lighting_deduct", dest="bad_lighting_deduct",
@@ -163,6 +159,8 @@ parser.add_option("--rs", "--rent_sum", dest="rent_sum",
                   default=RENT_SUM, help="The total cost of combined space")
 parser.add_option("--hs", "--house_size", dest="house_size",
                   default=HOUSE_SIZE, help="The total square footage of home")
+parser.add_option("--f", "--file", dest="file_name",
+                  default="data.csv", help="Name of csv file containing deets")
     
 
 if __name__ == '__main__':
@@ -179,6 +177,9 @@ if __name__ == '__main__':
             deets = Deets(deets.sqft, deets.has_window,
                           ["/".join(deets.occupied_by)])
             rooms[room] = deets
+    
+    FILE_NAME = options.file_name
+    rooms = get_deets_from_csv(FILE_NAME)
     PEEPS_COUNT = sum([len(room.occupied_by) for room in rooms.values()])
     
     BAD_LIGHTING_DEDUCTION, GOOD_LIGHTING_FEE = calculate_opposing_fee(
