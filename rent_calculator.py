@@ -25,19 +25,19 @@ floor_plan = """
 # Expects a csv with the following fields
 # 'room_id', 'sqft', 'has_window', 'percent_usable', 'occupied_by'
 def get_deets_from_csv(file_name='data.csv'):
-  rooms = {}
-  occupants = {}
-  with open(file_name) as csvfile:
-    deets = csv.DictReader(csvfile)
-    for room in deets:
-      room_id = room['room_id']
-      rooms[room_id] = Deets(
-        float(room['sqft']),
-        (room['has_window'] == "True"),
-        room['occupied_by'].split(','),
-        float(room['percent_usable'])
-      )
-  return rooms
+    rooms = {}
+    occupants = {}
+    with open(file_name) as csvfile:
+        deets = csv.DictReader(csvfile)
+        for room in deets:
+            room_id = room['room_id']
+            rooms[room_id] = Deets(
+                float(room['sqft']),
+                (room['has_window'] == 'True'),
+                room['occupied_by'].split(','),
+                float(room['percent_usable'])
+            )
+    return rooms
 
 # Takes in a decimal representing the percent weight of the common space that
 #   will factor into rent.
