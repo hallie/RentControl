@@ -1,10 +1,8 @@
 import csv
 
-from collections import namedtuple
-from optparse import OptionParser
+from helpers import Home, Options, Rent
 
-Deets = namedtuple('Deets', ['sqft', 'has_window', 'occupied_by', 'percent_usable'])
-Rent  = namedtuple('Rent', ['price', 'room', 'deets'])
+
 floor_plan = """
 [Floor B]                  [Floor C]
 |------------------------  |------------------------
@@ -22,63 +20,19 @@ floor_plan = """
                            -------------------
 """
 
-# Expects a csv with the following fields
-# 'room_id', 'sqft', 'has_window', 'percent_usable', 'occupied_by'
-def get_deets_from_csv(file_name='data.csv'):
-    rooms = {}
-    occupants = {}
-    with open(file_name) as csvfile:
-        deets = csv.DictReader(csvfile)
-        for room in deets:
-            room_id = room['room_id']
-            rooms[room_id] = Deets(
-                float(room['sqft']),
-                (room['has_window'] == 'True'),
-                room['occupied_by'].split(','),
-                float(room['percent_usable'])
-            )
-    return rooms
-
-# Takes in a decimal representing the percent weight of the common space that
-#   will factor into rent.
-def calculate_common_attrs(weight=.5):
-    common_space = HOUSE_SIZE - sum([room.sqft for room in rooms.values()])
-    common_share = common_space/PEEPS_COUNT
-    common_cost_per_sqft = RENT_SUM/HOUSE_SIZE * weight
-    common_share_cost = round(common_share * common_cost_per_sqft, 2)
-    return common_share_cost, common_cost_per_sqft, common_space
-
-
-# If its `has_attr` its expecting to apply the fee to the group that has attr.
-# Otherwise, it gets everyone who doesn't.
-# returns cost, opposing_cost
-def calculate_opposing_fee(attr, cost, has_attr=True):
-    peeps_with_attr = sum([len(deets.occupied_by) for deets in rooms.values()
-                           if getattr(deets, attr) == has_attr])
-    if peeps_with_attr and peeps_with_attr != PEEPS_COUNT:
-        if has_attr:
-            opp_cost = (PEEPS_COUNT - peeps_with_attr) * cost
-            opp_cost /= peeps_with_attr * -1
-            return cost, round(opp_cost, 2)
-        opp_cost = peeps_with_attr * cost
-        opp_cost /= (PEEPS_COUNT - peeps_with_attr) * -1
-        return cost, round(opp_cost, 2)
-    return 0, 0
-
 
 # Putting up here for cleanliness reasons. Makes it easier to add more later.
-def apply_fees_or_discounts(deets):
-    bonus_fees_or_discounts = GOOD_LIGHTING_FEE if deets.has_window \
-                                                else BAD_LIGHTING_DEDUCTION
+def apply_fees_or_discounts(deets, home):
+    bonus_fees_or_discounts = home.good_lighting_fee if deets.has_window \
+                                                else home.bad_lighting_deduction
     return bonus_fees_or_discounts
 
 
-def calculate_rent(deets, round_dollar=True):
-    room_size, has_window, occupants, percent_usable = deets
-    occupants = len(occupants)
-    base_cost = COMMON_SHARE_COST * occupants
-    room_cost = room_size * ROOM_COST_PER_SQFT * percent_usable
-    bonus_fees_or_discounts = apply_fees_or_discounts(deets)
+def calculate_rent(room_deets, home, round_dollar=True):
+    occupants = len(room_deets.occupied_by)
+    base_cost = home.common_share_cost * occupants
+    room_cost = room_deets.sqft * home.room_cost_per_sqft * room_deets.percent_usable
+    bonus_fees_or_discounts = apply_fees_or_discounts(room_deets, home)
     rent = (base_cost + room_cost) + (bonus_fees_or_discounts * occupants)
     if round_dollar:
         return int(rent)
@@ -87,18 +41,13 @@ def calculate_rent(deets, round_dollar=True):
 
 # Since there's lots of division happening, it makes more sense for us to drop
 #  all of the extra pennies on people paying the least.
-def cheapest_room_picks_up_the_cents(rents):
-    rents = sorted(rents)
-    missing_money = RENT_SUM - sum([rent.price for rent in rents])
-    # If the math somehow comes out to more than the cost of the house,
-    #  it subtracts from the most expensive room.
-    if missing_money < 0:
-        rents = rents[::-1]
-    has_lowest_price = len([rent for rent in rents 
-                            if rent[0] == rents[0].price])
-    new_price = rents[0].price + (missing_money / has_lowest_price)
-    for i in range(has_lowest_price):
-        rents[i] = Rent(new_price, rents[i].room, rents[i].deets)
+def cheapest_room_picks_up_the_cents(rents, home):
+    missing_money = home.rent_sum - sum([rent.price for rent in rents.values()])
+    num_people_with_lowest_price = sum([len(rent.deets.occupied_by) for rent in home.cheapest_rooms])
+    cent_diff = missing_money / num_people_with_lowest_price
+    for rent in home.cheapest_rooms:
+        new_price = rent.price + (cent_diff * len(rent.deets.occupied_by))
+        rents[rent.room] = Rent(new_price, rent.room, rent.deets)
     return rents
 
 
@@ -142,74 +91,37 @@ def print_cost_per_person(rents):
     print row_divider
     print
 
-
-RENT_SUM = 18000.00
-HOUSE_SIZE = 6200.00
-
-parser = OptionParser()
-parser.add_option("--bld", "--bad_lighting_deduct", dest="bad_lighting_deduct",
-                  default="100", help="Deduction for poorly lit rooms")
-parser.add_option("--rd", "--round_dollar", dest="round_dollar",
-                  default="True", help="Round to nearest dollar")
-parser.add_option("--cw", "--common_weight", dest="common_weight",
-                  default=".6", help="Weight of common space on rent price")
-parser.add_option("--cs", "--calculate_singles", dest="calculate_singles",
-                  default="False", help="Check pricing all rooms were singles")
-parser.add_option("--rs", "--rent_sum", dest="rent_sum",
-                  default=RENT_SUM, help="The total cost of combined space")
-parser.add_option("--hs", "--house_size", dest="house_size",
-                  default=HOUSE_SIZE, help="The total square footage of home")
-parser.add_option("--f", "--file", dest="file_name",
-                  default="data.csv", help="Name of csv file containing deets")
     
 
 if __name__ == '__main__':
-    options, args = parser.parse_args()
-    COMMON_WEIGHT = float(options.common_weight)
-    ROUND_DOLLAR = options.round_dollar == "True"
-    CACULATE_AS_SINGLES = options.calculate_singles == "True"
+    options, args = Options.parse_args()
+    home = Home(options)
     
-    HOUSE_SIZE = float(options.house_size)
-    RENT_SUM = float(options.rent_sum)
-    if CACULATE_AS_SINGLES:
-        for room in rooms:
-            deets = rooms[room]
-            deets = Deets(deets.sqft, deets.has_window,
-                          ["/".join(deets.occupied_by)])
-            rooms[room] = deets
-    
-    FILE_NAME = options.file_name
-    rooms = get_deets_from_csv(FILE_NAME)
-    PEEPS_COUNT = sum([len(room.occupied_by) for room in rooms.values()])
-    
-    BAD_LIGHTING_DEDUCTION, GOOD_LIGHTING_FEE = calculate_opposing_fee(
+    home.bad_lighting_deduction, home.good_lighting_fee = home.calculate_opposing_fee(
         'has_window', float(options.bad_lighting_deduct) * -1)
     
-    COMMON_SHARE_COST, COMMON_COST_PER_SQFT, COMMON_SPACE = calculate_common_attrs(COMMON_WEIGHT)
-
-    ROOM_COST_PER_SQFT = RENT_SUM - (COMMON_SHARE_COST * PEEPS_COUNT)
-    ROOM_COST_PER_SQFT /= HOUSE_SIZE - COMMON_SPACE
+    rents = {}
+    for room, deets in home.rooms.iteritems():
+        rent = calculate_rent(deets, home, home.round_dollar)
+        room_rent = Rent(rent, room, deets)
+        home.set_cheapest_room(room_rent)
+        rents[room] = room_rent
     
-    rents = []
-    for room, deets in rooms.iteritems():
-        rent = calculate_rent(deets, ROUND_DOLLAR)
-        rents.append(Rent(rent, room, deets))
-    
-    rents = sorted(rents)
-    if ROUND_DOLLAR:
-        rents = cheapest_room_picks_up_the_cents(rents)
+    if home.round_dollar:
+        rents = cheapest_room_picks_up_the_cents(rents, home)
+    rents = sorted(rents.values())
         
     print floor_plan
-    print "People in House:", PEEPS_COUNT
-    print "Total SqFt:", HOUSE_SIZE
-    print "Common Space:", COMMON_SPACE
+    print "People in House:", home.peeps_count
+    print "Total SqFt:", home.house_size
+    print "Common Space:", home.common_space
     print "Cost per Common SqFt: $%.2f (Weighted by %.2f)" % (
-        COMMON_COST_PER_SQFT, COMMON_WEIGHT)
-    print "Common Cost: $%.2f" % COMMON_SHARE_COST
-    print "Cost per Room SqFt: $%.2f" % ROOM_COST_PER_SQFT
-    print "Bad Lighting Rebate: $%.2f" % BAD_LIGHTING_DEDUCTION
-    print "Good Lighting Upcharge: %.2f" % GOOD_LIGHTING_FEE
+        home.common_cost_per_sqft, home.common_weight)
+    print "Common Cost: $%.2f" % home.common_share_cost
+    print "Cost per Room SqFt: $%.2f" % home.common_cost_per_sqft
+    print "Bad Lighting Rebate: $%.2f" % home.bad_lighting_deduction
+    print "Good Lighting Upcharge: $%.2f" % home.good_lighting_fee
     
     print_rents_per_room(rents)
-    if not CACULATE_AS_SINGLES:
+    if not home.calculate_as_singles:
         print_cost_per_person(rents)
